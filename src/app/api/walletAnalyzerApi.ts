@@ -54,6 +54,49 @@ export interface WalletAnalysisResponse {
       }>;
     }>;
   };
+  investigation_report?: {
+    metadata: {
+      system: string;
+      generated_by: string;
+      date: string;
+      report_id: string;
+      network: string;
+    };
+    wallet_information: {
+      wallet_address: string;
+      blockchain_network: string;
+      total_transactions: number;
+      first_transaction: string;
+      last_transaction: string;
+    };
+    risk_assessment: {
+      risk_score: number;
+      risk_level: string;
+      indicators_detected: string[];
+    };
+    suspicious_transaction_summary: {
+      suspicious_count: number;
+      example_transactions: Array<{
+        transaction_hash: string;
+        amount_eth: number;
+        date: string;
+      }>;
+    };
+    transaction_flow_analysis: {
+      transaction_path: string;
+      possible_pattern: string;
+    };
+    executive_summary: string;
+    ai_investigation_insight: string;
+    recommended_actions: string[];
+    disclaimer: string;
+    classification: "High Risk" | "Medium Risk" | "Low Risk";
+    visuals: {
+      signal_breakdown: Array<{ name: string; value: number }>;
+    };
+    report_text: string;
+    legacy_report_text?: string;
+  } | null;
 }
 
 export interface MlStatusResponse {

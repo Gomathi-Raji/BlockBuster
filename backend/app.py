@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 from analytics_data import build_analytics_dataset
 from fraud_model import ModelNotTrainedError, predict_from_features, predict_from_wallet_address, train_wallet_risk_model
 from multi_model_trainer import MODEL_FILES, predict_all_models_for_wallet, predict_all_models_for_wallets, train_all_models
+from report_generator import build_investigation_report_payload
 from threat_intel import lookup_addresses
 from wallet_analyzer import analyze_transactions
 
@@ -460,6 +461,65 @@ def analyze_wallet():
         "summary": f"Wallet {'flagged' if adjusted_risk >= 70 else 'under monitoring' if adjusted_risk >= 40 else 'low risk'} with adjusted risk score {adjusted_risk}/100",
     }
 
+    # Generate full report for medium/high-risk wallets.
+    unknown_wallets = len(
+        {
+            str(tx.get("from", "")).strip().lower()
+            for tx in analysis.get("transaction_flow", [])
+            if str(tx.get("from", "")).strip().lower() and str(tx.get("from", "")).strip().lower() != wallet_address.lower()
+        }
+        | {
+            str(tx.get("to", "")).strip().lower()
+            for tx in analysis.get("transaction_flow", [])
+            if str(tx.get("to", "")).strip().lower() and str(tx.get("to", "")).strip().lower() != wallet_address.lower()
+        }
+    )
+    suspicious_tx = len(analysis.get("suspicious_transactions", []))
+    total_volume = float(sum(float(tx.get("value_eth", 0.0) or 0.0) for tx in analysis.get("transaction_flow", [])))
+
+    flow = analysis.get("transaction_flow", [])
+    first_tx_ts = flow[-1].get("timestamp") if flow else None
+    last_tx_ts = flow[0].get("timestamp") if flow else None
+
+    suspicious_examples = []
+    for item in analysis.get("suspicious_transactions", [])[:3]:
+        suspicious_examples.append(
+            {
+                "transaction_hash": str(item.get("hash") or ""),
+                "amount_eth": float(item.get("value_eth") or 0.0),
+                "date": str(item.get("timestamp") or ""),
+            }
+        )
+
+    flow_addresses = [wallet_address.lower()]
+    for tx in flow[:20]:
+        src = str(tx.get("from", "")).strip().lower()
+        dst = str(tx.get("to", "")).strip().lower()
+        for addr in [src, dst]:
+            if addr and addr not in flow_addresses:
+                flow_addresses.append(addr)
+            if len(flow_addresses) >= 4:
+                break
+        if len(flow_addresses) >= 4:
+            break
+
+    report_payload = None
+    if adjusted_risk >= 40:
+        report_payload = build_investigation_report_payload(
+            wallet_address=wallet_address,
+            risk_score=float(adjusted_risk),
+            suspicious_tx=suspicious_tx,
+            unknown_wallets=unknown_wallets,
+            total_volume=total_volume,
+            total_transactions=int(analysis.get("total_transactions", 0)),
+            first_transaction=str(first_tx_ts) if first_tx_ts else None,
+            last_transaction=str(last_tx_ts) if last_tx_ts else None,
+            suspicious_examples=suspicious_examples,
+            flow_addresses=flow_addresses,
+            network="Ethereum",
+            generated_by="BlockBuster",
+        )
+
     return jsonify({
         "wallet_address": wallet_address,
         "total_transactions": analysis["total_transactions"],
@@ -469,6 +529,7 @@ def analyze_wallet():
         "risk_score": adjusted_risk,
         "transaction_flow": analysis["transaction_flow"],
         "explainability": explainability,
+        "investigation_report": report_payload,
         "threat_intelligence": {
             "checked_addresses": len(related_addresses),
             "flagged_addresses": len(high_conf_hits),
