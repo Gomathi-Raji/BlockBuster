@@ -8,6 +8,7 @@ import requests
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 
+from analytics_data import build_analytics_dataset
 from wallet_analyzer import analyze_transactions
 
 # ---------------------------------------------------------------------------
@@ -35,6 +36,76 @@ _ETH_ADDRESS_RE = re.compile(r"^0x[0-9a-fA-F]{40}$")
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({"status": "ok", "service": "CryptoFlow Analyzer"}), 200
+
+
+@app.route("/api/analytics", methods=["GET"])
+def analytics():
+    """
+    GET /api/analytics
+
+    Returns a complete frontend-ready analytics dataset:
+    {
+      walletNodes: [...],
+      transactions: [...],
+      alerts: [...],
+      volumeData: [...],
+      riskDistData: [...],
+      hourlyAlerts: [...]
+    }
+    """
+    try:
+        payload = build_analytics_dataset()
+        return jsonify(payload), 200
+    except FileNotFoundError as exc:
+        return jsonify({"error": str(exc)}), 500
+    except ValueError as exc:
+        return jsonify({"error": f"Invalid analytics dataset: {exc}"}), 500
+    except Exception as exc:
+        return jsonify({"error": f"Failed to build analytics dataset: {exc}"}), 500
+
+
+@app.route("/api/suspicious", methods=["GET"])
+def suspicious_transactions():
+    """
+    GET /api/suspicious?limit=200
+
+    Returns suspicious transactions extracted from the analytics dataset.
+    """
+    limit = request.args.get("limit", default=200, type=int)
+    limit = max(1, min(1000, limit))
+
+    try:
+        payload = build_analytics_dataset()
+    except Exception as exc:
+        return jsonify({"error": f"Failed to build analytics dataset: {exc}"}), 500
+
+    suspicious = [tx for tx in payload.get("transactions", []) if tx.get("suspicious")]
+    return jsonify({"count": len(suspicious), "items": suspicious[:limit]}), 200
+
+
+@app.route("/api/alerts", methods=["GET"])
+def alerts_feed():
+    """
+    GET /api/alerts?severity=critical|high|medium|low
+
+    Returns alerts from the analytics dataset with optional severity filter.
+    """
+    severity = (request.args.get("severity") or "").strip().lower()
+    allowed = {"critical", "high", "medium", "low"}
+
+    if severity and severity not in allowed:
+        return jsonify({"error": "severity must be one of: critical, high, medium, low"}), 400
+
+    try:
+        payload = build_analytics_dataset()
+    except Exception as exc:
+        return jsonify({"error": f"Failed to build analytics dataset: {exc}"}), 500
+
+    alerts = payload.get("alerts", [])
+    if severity:
+        alerts = [a for a in alerts if str(a.get("severity", "")).lower() == severity]
+
+    return jsonify({"count": len(alerts), "items": alerts}), 200
 
 
 @app.route("/analyze_wallet", methods=["POST"])

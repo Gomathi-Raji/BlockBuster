@@ -15,8 +15,6 @@ import {
   RefreshCw,
 } from "lucide-react";
 import {
-  walletNodes,
-  transactions,
   Transaction,
   WalletNode,
   getRiskColor,
@@ -24,6 +22,7 @@ import {
   formatAddress,
   timeAgo,
 } from "../data/mockData";
+import { useAnalyticsData } from "../hooks/useAnalyticsData";
 
 type SortKey = "risk" | "amount" | "timestamp";
 type SortDir = "asc" | "desc";
@@ -36,6 +35,8 @@ interface SuspiciousRow {
 }
 
 export function SuspiciousActivityPage() {
+  const { data } = useAnalyticsData();
+  const { walletNodes, transactions } = data;
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("risk");
   const [sortDir, setSortDir] = useState<SortDir>("desc");

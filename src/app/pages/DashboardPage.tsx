@@ -23,16 +23,12 @@ import {
   Cell,
 } from "recharts";
 import {
-  walletNodes,
-  transactions,
-  alerts,
-  volumeData,
-  riskDistData,
   getRiskColor,
   getRiskLabel,
   formatAddress,
   timeAgo,
 } from "../data/mockData";
+import { useAnalyticsData } from "../hooks/useAnalyticsData";
 
 const S = {
   page: {
@@ -161,8 +157,16 @@ const CustomTooltip = ({ active, payload, label }: any) => {
 };
 
 export function DashboardPage() {
-  const [liveCount, setLiveCount] = useState(12481);
+  const { data } = useAnalyticsData();
+  const { walletNodes, transactions, alerts, volumeData, riskDistData } = data;
+  const [liveCount, setLiveCount] = useState(0);
   const [ticker, setTicker] = useState<{ hash: string; amount: string; flag: boolean }[]>([]);
+
+  useEffect(() => {
+    if (transactions.length > 0) {
+      setLiveCount(transactions.length);
+    }
+  }, [transactions]);
 
   useEffect(() => {
     const interval = setInterval(() => {

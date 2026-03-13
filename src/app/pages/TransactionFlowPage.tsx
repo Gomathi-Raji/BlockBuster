@@ -14,8 +14,6 @@ import {
   ArrowUpRight,
 } from "lucide-react";
 import {
-  walletNodes,
-  transactions,
   WalletNode,
   Transaction,
   getRiskColor,
@@ -23,6 +21,7 @@ import {
   formatAddress,
   timeAgo,
 } from "../data/mockData";
+import { useAnalyticsData } from "../hooks/useAnalyticsData";
 
 interface NodePosition {
   id: string;
@@ -41,6 +40,8 @@ const TYPE_ICON: Record<string, string> = {
 };
 
 export function TransactionFlowPage() {
+  const { data } = useAnalyticsData();
+  const { walletNodes, transactions } = data;
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const posRef = useRef<NodePosition[]>([]);
@@ -71,7 +72,7 @@ export function TransactionFlowPage() {
         vy: 0,
       };
     });
-  }, []);
+  }, [walletNodes]);
 
   // Draw function
   useEffect(() => {

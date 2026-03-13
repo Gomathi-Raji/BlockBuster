@@ -26,13 +26,12 @@ import {
   Cell,
 } from "recharts";
 import {
-  alerts,
-  hourlyAlerts,
   Alert,
   getSeverityColor,
   formatAddress,
   timeAgo,
 } from "../data/mockData";
+import { useAnalyticsData } from "../hooks/useAnalyticsData";
 
 const TYPE_CONFIG: Record<
   Alert["type"],
@@ -53,12 +52,18 @@ const SEVERITY_ORDER: Record<Alert["severity"], number> = {
 };
 
 export function AlertMonitoringPage() {
+  const { data, error } = useAnalyticsData();
+  const { alerts, hourlyAlerts } = data;
   const [filter, setFilter] = useState<"all" | Alert["severity"]>("all");
   const [typeFilter, setTypeFilter] = useState<"all" | Alert["type"]>("all");
   const [showResolved, setShowResolved] = useState(false);
   const [selected, setSelected] = useState<Alert | null>(null);
-  const [localAlerts, setLocalAlerts] = useState<Alert[]>(alerts);
+  const [localAlerts, setLocalAlerts] = useState<Alert[]>([]);
   const [liveStream, setLiveStream] = useState<Alert[]>([]);
+
+  useEffect(() => {
+    setLocalAlerts(alerts);
+  }, [alerts]);
 
   // Simulate live alerts
   useEffect(() => {
@@ -156,6 +161,22 @@ export function AlertMonitoringPage() {
 
   return (
     <div style={{ padding: "28px 32px", fontFamily: "'Space Grotesk', sans-serif", background: "#050912", minHeight: "100%" }}>
+      {error && (
+        <div
+          style={{
+            marginBottom: 16,
+            padding: "10px 12px",
+            borderRadius: 8,
+            border: "1px solid rgba(255,43,74,0.35)",
+            background: "rgba(255,43,74,0.08)",
+            color: "#ff9090",
+            fontSize: 12,
+          }}
+        >
+          Unable to refresh backend alerts: {error}
+        </div>
+      )}
+
       {/* Header */}
       <div style={{ marginBottom: 24, display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
         <div>
