@@ -21,14 +21,39 @@ import {
   BarChart,
   Bar,
   Cell,
+  PieChart,
+  Pie,
+  LineChart,
+  Line,
+  Legend,
 } from "recharts";
+// Helper: Aggregate AI anomaly/shift counts by date
+function getAiTimeline(aiInsights: any) {
+  const timeline: Record<string, { anomaly: number; shift: number }> = {};
+  Object.values(aiInsights || {}).forEach((item: any) => {
+    const date = item.date || item.models?.transaction_anomaly_detector?.date || "unknown";
+    if (!timeline[date]) timeline[date] = { anomaly: 0, shift: 0 };
+    if (item.models?.transaction_anomaly_detector?.is_anomaly) timeline[date].anomaly++;
+    if (item.models?.behavior_shift_detector?.behavior_shift_detected) timeline[date].shift++;
+  });
+  return Object.entries(timeline).map(([date, v]) => ({ date, ...v }));
+}
+
+// Helper: Aggregate alert type counts
+function getAlertTypeData(alerts: any[]) {
+  const typeMap: Record<string, number> = {};
+  alerts.forEach((a) => {
+    typeMap[a.type] = (typeMap[a.type] || 0) + 1;
+  });
+  return Object.entries(typeMap).map(([type, value]) => ({ name: type, value }));
+}
 import {
   getRiskColor,
   getRiskLabel,
   formatAddress,
   timeAgo,
 } from "../data/mockData";
-import { useAnalyticsData } from "../hooks/useAnalyticsData";
+import { useAnalyticsDataWithAi } from "../hooks/useAnalyticsData";
 
 const S = {
   page: {
@@ -157,7 +182,7 @@ const CustomTooltip = ({ active, payload, label }: any) => {
 };
 
 export function DashboardPage() {
-  const { data } = useAnalyticsData();
+  const { data } = useAnalyticsDataWithAi();
   const { walletNodes, transactions, alerts, volumeData, riskDistData } = data;
   const [liveCount, setLiveCount] = useState(0);
   const [ticker, setTicker] = useState<{ hash: string; amount: string; flag: boolean }[]>([]);
@@ -182,6 +207,88 @@ export function DashboardPage() {
   const criticalAlerts = alerts.filter((a) => a.severity === "critical" && !a.resolved).length;
   const highRiskWallets = walletNodes.filter((w) => w.risk >= 80).length;
   const suspiciousTx = transactions.filter((t) => t.suspicious).length;
+
+  const aiInsights = data.aiInsights ?? {};
+  const aiWallets = Object.values(aiInsights);
+  const avgPriority = aiWallets.length
+    ? aiWallets.reduce((sum, item) => sum + (item.models.alert_prioritizer?.priority_score ?? 0), 0) / aiWallets.length
+    : 0;
+  const anomalyCount = aiWallets.filter((item) => item.models.transaction_anomaly_detector?.is_anomaly).length;
+  const shiftCount = aiWallets.filter((item) => item.models.behavior_shift_detector?.behavior_shift_detected).length;
+
+  // New chart data
+  const aiTimeline = getAiTimeline(aiInsights);
+  const alertTypeData = getAlertTypeData(alerts);
+      {/* New: AI Timeline & Alert Type Distribution */}
+      <div style={{ display: "flex", gap: 20, marginBottom: 24 }}>
+        {/* AI Anomaly/Behavior Shift Timeline */}
+        <div
+          style={{
+            flex: 2,
+            background: "linear-gradient(135deg, #090f1e 0%, #0a1628 100%)",
+            border: "1px solid #1a3050",
+            borderRadius: 12,
+            padding: 24,
+          }}
+        >
+          <div style={{ color: "#e2f0ff", fontWeight: 700, fontSize: 14, marginBottom: 8 }}>
+            AI Anomaly & Behavior Shift Timeline
+          </div>
+          <div style={{ color: "#5b7fa6", fontSize: 11, marginBottom: 16 }}>
+            Daily count of detected anomalies and behavior shifts
+          </div>
+          <ResponsiveContainer width="100%" height={200}>
+            <LineChart data={aiTimeline} margin={{ left: 0, right: 0, top: 8, bottom: 0 }}>
+              <XAxis dataKey="date" tick={{ fill: "#5b7fa6", fontSize: 11 }} axisLine={false} tickLine={false} />
+              <YAxis tick={{ fill: "#5b7fa6", fontSize: 11 }} axisLine={false} tickLine={false} allowDecimals={false} />
+              <Tooltip />
+              <Legend />
+              <Line type="monotone" dataKey="anomaly" name="Anomalies" stroke="#ff7700" strokeWidth={2} dot={false} />
+              <Line type="monotone" dataKey="shift" name="Behavior Shifts" stroke="#f5c518" strokeWidth={2} dot={false} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+        {/* Alert Type Distribution */}
+        <div
+          style={{
+            flex: 1,
+            background: "linear-gradient(135deg, #090f1e 0%, #0a1628 100%)",
+            border: "1px solid #1a3050",
+            borderRadius: 12,
+            padding: 24,
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <div style={{ color: "#e2f0ff", fontWeight: 700, fontSize: 14, marginBottom: 8 }}>
+            Alert Type Distribution
+          </div>
+          <div style={{ color: "#5b7fa6", fontSize: 11, marginBottom: 16 }}>
+            Proportion of alert types (all time)
+          </div>
+          <ResponsiveContainer width="100%" height={200}>
+            <PieChart>
+              <Pie
+                data={alertTypeData}
+                dataKey="value"
+                nameKey="name"
+                cx="50%"
+                cy="50%"
+                outerRadius={60}
+                fill="#00aaff"
+                label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}
+              >
+                {alertTypeData.map((entry, i) => {
+                  const colors = ["#00aaff", "#ff7700", "#f5c518", "#ff2b4a", "#a855f7"];
+                  return <Cell key={i} fill={colors[i % colors.length]} />;
+                })}
+              </Pie>
+            </PieChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
 
   return (
     <div style={S.page}>
@@ -256,6 +363,39 @@ export function DashboardPage() {
           color="#a855f7"
           trend="up"
         />
+      </div>
+
+      {/* AI model snapshot */}
+      <div style={{ ...S.card, marginBottom: 24 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+          <div>
+            <div style={{ color: "#e2f0ff", fontSize: 14, fontWeight: 700 }}>AI Intelligence Snapshot</div>
+            <div style={{ color: "#5b7fa6", fontSize: 11, marginTop: 2 }}>
+              Multi-model signals from risk, anomaly, behavior shift, entity and alert prioritization
+            </div>
+          </div>
+          <div style={{ color: "#7a9cc0", fontSize: 11 }}>
+            Scored wallets: {data.aiIntegration?.scored_wallets ?? 0}
+          </div>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12 }}>
+          <div style={{ background: "#071326", border: "1px solid #1a3050", borderRadius: 10, padding: "10px 12px" }}>
+            <div style={{ color: "#5b7fa6", fontSize: 10, marginBottom: 4 }}>ANOMALY FLAGS</div>
+            <div style={{ color: "#ff7700", fontSize: 18, fontWeight: 700 }}>{anomalyCount}</div>
+          </div>
+          <div style={{ background: "#071326", border: "1px solid #1a3050", borderRadius: 10, padding: "10px 12px" }}>
+            <div style={{ color: "#5b7fa6", fontSize: 10, marginBottom: 4 }}>BEHAVIOR SHIFTS</div>
+            <div style={{ color: "#f5c518", fontSize: 18, fontWeight: 700 }}>{shiftCount}</div>
+          </div>
+          <div style={{ background: "#071326", border: "1px solid #1a3050", borderRadius: 10, padding: "10px 12px" }}>
+            <div style={{ color: "#5b7fa6", fontSize: 10, marginBottom: 4 }}>AVG PRIORITY</div>
+            <div style={{ color: "#00aaff", fontSize: 18, fontWeight: 700 }}>{avgPriority.toFixed(1)}</div>
+          </div>
+          <div style={{ background: "#071326", border: "1px solid #1a3050", borderRadius: 10, padding: "10px 12px" }}>
+            <div style={{ color: "#5b7fa6", fontSize: 10, marginBottom: 4 }}>AI ERRORS</div>
+            <div style={{ color: "#ff2b4a", fontSize: 18, fontWeight: 700 }}>{data.aiIntegration?.errors?.length ?? 0}</div>
+          </div>
+        </div>
       </div>
 
       {/* Charts row */}

@@ -22,7 +22,7 @@ import {
   formatAddress,
   timeAgo,
 } from "../data/mockData";
-import { useAnalyticsData } from "../hooks/useAnalyticsData";
+import { useAnalyticsDataWithAi } from "../hooks/useAnalyticsData";
 
 type SortKey = "risk" | "amount" | "timestamp";
 type SortDir = "asc" | "desc";
@@ -35,7 +35,7 @@ interface SuspiciousRow {
 }
 
 export function SuspiciousActivityPage() {
-  const { data } = useAnalyticsData();
+  const { data } = useAnalyticsDataWithAi();
   const { walletNodes, transactions } = data;
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("risk");
@@ -73,6 +73,21 @@ export function SuspiciousActivityPage() {
       else { va = new Date(a.tx.timestamp).getTime(); vb = new Date(b.tx.timestamp).getTime(); }
       return sortDir === "desc" ? vb - va : va - vb;
     });
+
+  const aiInsights = data.aiInsights ?? {};
+  const suspiciousWalletAddresses = new Set<string>();
+  suspiciousTxs.forEach((row) => {
+    if (row.fromWallet?.address) suspiciousWalletAddresses.add(row.fromWallet.address.toLowerCase());
+    if (row.toWallet?.address) suspiciousWalletAddresses.add(row.toWallet.address.toLowerCase());
+  });
+
+  const suspiciousWalletAi = [...suspiciousWalletAddresses]
+    .map((address) => aiInsights[address])
+    .filter((v): v is NonNullable<typeof v> => Boolean(v));
+
+  const anomalyLinked = suspiciousWalletAi.filter((item) => item.models.transaction_anomaly_detector?.is_anomaly).length;
+  const shiftLinked = suspiciousWalletAi.filter((item) => item.models.behavior_shift_detector?.behavior_shift_detected).length;
+  const highPriorityLinked = suspiciousWalletAi.filter((item) => (item.models.alert_prioritizer?.priority_score ?? 0) >= 70).length;
 
   const handleSort = (key: SortKey) => {
     if (sortKey === key) setSortDir(sortDir === "desc" ? "asc" : "desc");
@@ -179,6 +194,21 @@ export function SuspiciousActivityPage() {
             <div style={{ color: "#5b7fa6", fontSize: 10, letterSpacing: "0.04em" }}>{item.label}</div>
           </div>
         ))}
+      </div>
+
+      <div style={{ display: "flex", gap: 16, marginBottom: 20 }}>
+        <div style={{ flex: 1, background: "#081426", border: "1px solid #1a3050", borderRadius: 10, padding: "12px 14px" }}>
+          <div style={{ color: "#5b7fa6", fontSize: 10, marginBottom: 4 }}>AI ANOMALY-LINKED WALLETS</div>
+          <div style={{ color: "#ff7700", fontSize: 18, fontWeight: 700 }}>{anomalyLinked}</div>
+        </div>
+        <div style={{ flex: 1, background: "#081426", border: "1px solid #1a3050", borderRadius: 10, padding: "12px 14px" }}>
+          <div style={{ color: "#5b7fa6", fontSize: 10, marginBottom: 4 }}>AI SHIFT-LINKED WALLETS</div>
+          <div style={{ color: "#f5c518", fontSize: 18, fontWeight: 700 }}>{shiftLinked}</div>
+        </div>
+        <div style={{ flex: 1, background: "#081426", border: "1px solid #1a3050", borderRadius: 10, padding: "12px 14px" }}>
+          <div style={{ color: "#5b7fa6", fontSize: 10, marginBottom: 4 }}>HIGH PRIORITY (AI)</div>
+          <div style={{ color: "#ff2b4a", fontSize: 18, fontWeight: 700 }}>{highPriorityLinked}</div>
+        </div>
       </div>
 
       {/* Filters */}

@@ -9,9 +9,12 @@ import {
   ArrowUpRight,
   ArrowDownLeft,
   Network,
+  Plus,
+  Minus,
+  RotateCcw,
 } from "lucide-react";
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
-import { analyzeWallet, type WalletAnalysisResponse, type FlowTransaction } from "../api/walletAnalyzerApi";
+import { analyzeWallet, predictAllAiFeatures, type WalletAnalysisResponse, type FlowTransaction, type MlAllFeaturesResponse } from "../api/walletAnalyzerApi";
 import { getRiskColor, getRiskLabel, formatAddress, timeAgo } from "../data/mockData";
 
 interface Counterparty {
@@ -30,76 +33,310 @@ function MiniFlowGraph({
   counterparties: Counterparty[];
   suspiciousPairs: Set<string>;
 }) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const VIEW_WIDTH = 760;
+  const VIEW_HEIGHT = 460;
+  const CENTER_X = VIEW_WIDTH / 2;
+  const CENTER_Y = VIEW_HEIGHT / 2;
+  const MIN_ZOOM = 0.9;
+  const MAX_ZOOM = 2.2;
+
+  const [zoom, setZoom] = useState(1.05);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [isPanning, setIsPanning] = useState(false);
+  const [hoveredAddress, setHoveredAddress] = useState<string | null>(null);
+  const dragRef = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);
+
+  const clampPan = (nextX: number, nextY: number, nextZoom: number) => {
+    const maxX = Math.max(0, ((VIEW_WIDTH * (nextZoom - 1)) / 2) + 120);
+    const maxY = Math.max(0, ((VIEW_HEIGHT * (nextZoom - 1)) / 2) + 90);
+    return {
+      x: Math.max(-maxX, Math.min(maxX, nextX)),
+      y: Math.max(-maxY, Math.min(maxY, nextY)),
+    };
+  };
+
+  const nodes = useMemo(() => {
+    const ranked = counterparties.slice(0, 10);
+    return ranked.map((node, index) => {
+      const angle = (index / Math.max(1, ranked.length)) * Math.PI * 2 - Math.PI / 2;
+      const ring = index < 5 ? 150 : 202;
+      const radius = ring + (index % 2 === 0 ? 8 : -8);
+      const x = CENTER_X + Math.cos(angle) * radius;
+      const y = CENTER_Y + Math.sin(angle) * radius;
+      const pairKey = [walletAddress, node.address].sort().join("|");
+      const suspicious = suspiciousPairs.has(pairKey);
+      const nodeRadius = Math.min(20, 10 + node.txCount * 0.85 + node.suspiciousTxCount * 2.4);
+
+      return {
+        ...node,
+        x,
+        y,
+        suspicious,
+        nodeRadius,
+        pairKey,
+      };
+    });
+  }, [counterparties, suspiciousPairs, walletAddress]);
+
+  const hoveredNode = nodes.find((node) => node.address === hoveredAddress) ?? null;
 
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
+    setZoom(1.05);
+    setPan({ x: 0, y: 0 });
+    setHoveredAddress(null);
+    setIsPanning(false);
+    dragRef.current = null;
+  }, [walletAddress]);
 
-    canvas.width = 420;
-    canvas.height = 240;
+  useEffect(() => {
+    setPan((prev) => clampPan(prev.x, prev.y, zoom));
+  }, [zoom]);
 
-    const width = 420;
-    const height = 240;
-    const cx = width / 2;
-    const cy = height / 2;
-
-    ctx.fillStyle = "#070d1a";
-    ctx.fillRect(0, 0, width, height);
-
-    const nodes = counterparties.slice(0, 8);
-
-    nodes.forEach((node, index) => {
-      const angle = (index / Math.max(1, nodes.length)) * Math.PI * 2 - Math.PI / 2;
-      const radius = 88;
-      const x = cx + Math.cos(angle) * radius;
-      const y = cy + Math.sin(angle) * radius;
-      const pairKey = [walletAddress, node.address].sort().join("|");
-      const isSuspicious = suspiciousPairs.has(pairKey);
-
-      ctx.beginPath();
-      ctx.moveTo(cx, cy);
-      const mx = (cx + x) / 2 + (cy - y) * 0.12;
-      const my = (cy + y) / 2 + (x - cx) * 0.12;
-      ctx.quadraticCurveTo(mx, my, x, y);
-      ctx.strokeStyle = isSuspicious ? "#ff2b4a88" : "#0e6cc477";
-      ctx.lineWidth = isSuspicious ? 1.8 : 1;
-      ctx.setLineDash(isSuspicious ? [] : [4, 4]);
-      ctx.stroke();
-      ctx.setLineDash([]);
-
-      ctx.beginPath();
-      ctx.arc(x, y, 14, 0, Math.PI * 2);
-      ctx.fillStyle = "#0a1628";
-      ctx.fill();
-      ctx.strokeStyle = getRiskColor(node.risk);
-      ctx.lineWidth = 1.4;
-      ctx.stroke();
-
-      ctx.font = "10px 'JetBrains Mono', monospace";
-      ctx.textAlign = "center";
-      ctx.textBaseline = "top";
-      ctx.fillStyle = "#7a9cc0";
-      ctx.fillText(formatAddress(node.address), x, y + 18);
+  const zoomBy = (delta: number) => {
+    setZoom((prev) => {
+      const nextZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, Number((prev + delta).toFixed(2))));
+      setPan((oldPan) => clampPan(oldPan.x, oldPan.y, nextZoom));
+      return nextZoom;
     });
+  };
 
-    ctx.beginPath();
-    ctx.arc(cx, cy, 20, 0, Math.PI * 2);
-    ctx.fillStyle = "#0a1628";
-    ctx.fill();
-    ctx.strokeStyle = "#00aaff";
-    ctx.lineWidth = 2;
-    ctx.stroke();
-    ctx.fillStyle = "#00aaff";
-    ctx.font = "bold 11px 'Space Grotesk', sans-serif";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText("YOU", cx, cy);
-  }, [walletAddress, counterparties, suspiciousPairs]);
+  return (
+    <div style={{ position: "relative", width: "100%", height: "100%" }}>
+      <div style={{ position: "absolute", top: 10, right: 10, zIndex: 3, display: "flex", gap: 6 }}>
+        <button
+          onClick={() => zoomBy(0.16)}
+          style={{
+            width: 28,
+            height: 28,
+            borderRadius: 8,
+            border: "1px solid #25466b",
+            background: "rgba(5,12,22,0.88)",
+            color: "#9bc6ea",
+            cursor: "pointer",
+            display: "grid",
+            placeItems: "center",
+          }}
+          title="Zoom in"
+        >
+          <Plus size={14} />
+        </button>
+        <button
+          onClick={() => zoomBy(-0.16)}
+          style={{
+            width: 28,
+            height: 28,
+            borderRadius: 8,
+            border: "1px solid #25466b",
+            background: "rgba(5,12,22,0.88)",
+            color: "#9bc6ea",
+            cursor: "pointer",
+            display: "grid",
+            placeItems: "center",
+          }}
+          title="Zoom out"
+        >
+          <Minus size={14} />
+        </button>
+        <button
+          onClick={() => {
+            setZoom(1.05);
+            setPan({ x: 0, y: 0 });
+          }}
+          style={{
+            width: 28,
+            height: 28,
+            borderRadius: 8,
+            border: "1px solid #25466b",
+            background: "rgba(5,12,22,0.88)",
+            color: "#9bc6ea",
+            cursor: "pointer",
+            display: "grid",
+            placeItems: "center",
+          }}
+          title="Reset view"
+        >
+          <RotateCcw size={13} />
+        </button>
+      </div>
 
-  return <canvas ref={canvasRef} style={{ width: "100%", height: "100%", borderRadius: 8 }} />;
+      <div
+        style={{
+          position: "absolute",
+          left: 10,
+          top: 10,
+          zIndex: 2,
+          background: "rgba(6,12,22,0.72)",
+          border: "1px solid #1d3a5c",
+          borderRadius: 8,
+          padding: "5px 8px",
+          color: "#7ea7c8",
+          fontSize: 10,
+          letterSpacing: "0.04em",
+          fontFamily: "'JetBrains Mono', monospace",
+        }}
+      >
+        WHEEL TO ZOOM · DRAG TO PAN · HOVER NODES
+      </div>
+
+      <svg
+        viewBox={`0 0 ${VIEW_WIDTH} ${VIEW_HEIGHT}`}
+        style={{ width: "100%", height: "100%", display: "block", cursor: isPanning ? "grabbing" : "grab", touchAction: "none" }}
+        onWheel={(event) => {
+          event.preventDefault();
+          const delta = event.deltaY < 0 ? 0.16 : -0.16;
+          zoomBy(delta);
+        }}
+        onPointerDown={(event) => {
+          setIsPanning(true);
+          dragRef.current = { x: event.clientX, y: event.clientY, panX: pan.x, panY: pan.y };
+        }}
+        onPointerMove={(event) => {
+          if (!dragRef.current) return;
+          const rect = event.currentTarget.getBoundingClientRect();
+          const dx = (event.clientX - dragRef.current.x) * (VIEW_WIDTH / rect.width);
+          const dy = (event.clientY - dragRef.current.y) * (VIEW_HEIGHT / rect.height);
+          const nextPan = clampPan(dragRef.current.panX + dx, dragRef.current.panY + dy, zoom);
+          setPan(nextPan);
+        }}
+        onPointerUp={() => {
+          dragRef.current = null;
+          setIsPanning(false);
+        }}
+        onPointerLeave={() => {
+          dragRef.current = null;
+          setIsPanning(false);
+        }}
+      >
+        <defs>
+          <radialGradient id="graphBg" cx="50%" cy="50%" r="80%">
+            <stop offset="0%" stopColor="#0d1a2f" />
+            <stop offset="100%" stopColor="#060d19" />
+          </radialGradient>
+        </defs>
+
+        <rect x={0} y={0} width={VIEW_WIDTH} height={VIEW_HEIGHT} fill="url(#graphBg)" />
+
+        <g transform={`translate(${CENTER_X + pan.x} ${CENTER_Y + pan.y}) scale(${zoom}) translate(${-CENTER_X} ${-CENTER_Y})`}>
+          {[110, 170, 230].map((radius) => (
+            <circle key={radius} cx={CENTER_X} cy={CENTER_Y} r={radius} fill="none" stroke="#113153" strokeWidth={1} strokeDasharray="3 6" />
+          ))}
+
+          {nodes.map((node) => {
+            const controlX = (CENTER_X + node.x) / 2 + (CENTER_Y - node.y) * 0.12;
+            const controlY = (CENTER_Y + node.y) / 2 + (node.x - CENTER_X) * 0.12;
+            const isHovered = hoveredAddress === node.address;
+            return (
+              <path
+                key={node.pairKey}
+                d={`M ${CENTER_X} ${CENTER_Y} Q ${controlX} ${controlY} ${node.x} ${node.y}`}
+                fill="none"
+                stroke={node.suspicious ? "#ff4365" : isHovered ? "#26b8ff" : "#2c7fbe"}
+                strokeWidth={node.suspicious ? 2.2 : isHovered ? 2 : 1.4}
+                strokeDasharray={node.suspicious ? "" : "5 5"}
+                strokeOpacity={node.suspicious ? 0.95 : 0.7}
+              />
+            );
+          })}
+
+          {nodes.map((node) => {
+            const isHovered = hoveredAddress === node.address;
+            return (
+              <g
+                key={node.address}
+                onPointerEnter={() => setHoveredAddress(node.address)}
+                onPointerLeave={() => setHoveredAddress(null)}
+              >
+                <circle
+                  cx={node.x}
+                  cy={node.y}
+                  r={node.nodeRadius + (isHovered ? 3 : 0)}
+                  fill="#081426"
+                  stroke={node.suspicious ? "#ff4365" : getRiskColor(node.risk)}
+                  strokeWidth={isHovered ? 2.5 : 1.6}
+                />
+                <circle
+                  cx={node.x}
+                  cy={node.y}
+                  r={Math.max(3, Math.min(7, node.nodeRadius * 0.35))}
+                  fill={node.suspicious ? "#ff4365" : getRiskColor(node.risk)}
+                  opacity={0.9}
+                />
+              </g>
+            );
+          })}
+
+          <g>
+            <circle cx={CENTER_X} cy={CENTER_Y} r={26} fill="#071427" stroke="#00aaff" strokeWidth={2.6} />
+            <text x={CENTER_X} y={CENTER_Y + 4} fill="#00d4ff" fontSize="12" textAnchor="middle" fontWeight={700} fontFamily="Space Grotesk">
+              YOU
+            </text>
+          </g>
+        </g>
+      </svg>
+
+      <div
+        style={{
+          position: "absolute",
+          bottom: 10,
+          left: 10,
+          right: 10,
+          zIndex: 2,
+          display: "flex",
+          justifyContent: "space-between",
+          gap: 8,
+          alignItems: "flex-end",
+        }}
+      >
+        <div
+          style={{
+            background: "rgba(5,12,22,0.84)",
+            border: "1px solid #1d3a5c",
+            borderRadius: 8,
+            padding: "6px 8px",
+            color: "#8db4d5",
+            fontSize: 10,
+            fontFamily: "'JetBrains Mono', monospace",
+          }}
+        >
+          Zoom {zoom.toFixed(2)}x
+        </div>
+
+        {hoveredNode && (
+          <div
+            style={{
+              background: "rgba(5,12,22,0.94)",
+              border: `1px solid ${hoveredNode.suspicious ? "#ff436577" : "#1d3a5c"}`,
+              borderRadius: 8,
+              padding: "7px 10px",
+              minWidth: 180,
+            }}
+          >
+            <div style={{ color: "#d4e9ff", fontSize: 11, fontFamily: "'JetBrains Mono', monospace", marginBottom: 4 }}>
+              {formatAddress(hoveredNode.address)}
+            </div>
+            <div style={{ color: "#89afcf", fontSize: 10 }}>
+              {hoveredNode.txCount} txs · {hoveredNode.suspiciousTxCount} suspicious · risk {hoveredNode.risk}
+            </div>
+          </div>
+        )}
+
+        {!hoveredNode && (
+          <div
+            style={{
+              background: "rgba(5,12,22,0.84)",
+              border: "1px solid #1d3a5c",
+              borderRadius: 8,
+              padding: "6px 8px",
+              color: "#789ec0",
+              fontSize: 10,
+            }}
+          >
+            Hover a node to view address and stats
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 const ChartTooltip = ({ active, payload, label }: { active?: boolean; payload?: Array<{ value: number; color: string; name: string }>; label?: string }) => {
@@ -130,6 +367,7 @@ export function WalletAnalyzerPage() {
   const [analyzing, setAnalyzing] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<WalletAnalysisResponse | null>(null);
+  const [aiFeatures, setAiFeatures] = useState<MlAllFeaturesResponse | null>(null);
   const [copied, setCopied] = useState(false);
 
   const executeAnalysis = async () => {
@@ -142,8 +380,15 @@ export function WalletAnalyzerPage() {
     try {
       const response = await analyzeWallet(walletAddress);
       setAnalysis(response);
+      try {
+        const ai = await predictAllAiFeatures(walletAddress);
+        setAiFeatures(ai);
+      } catch {
+        setAiFeatures(null);
+      }
     } catch (err) {
       setAnalysis(null);
+      setAiFeatures(null);
       setErrorMessage(err instanceof Error ? err.message : "Unexpected error during wallet analysis.");
     } finally {
       setAnalyzing(false);
@@ -389,6 +634,33 @@ export function WalletAnalyzerPage() {
                   </div>
                 </div>
 
+                {aiFeatures && (
+                  <div style={{ marginBottom: 14, background: "#050912", border: "1px solid #0f1e35", borderRadius: 8, padding: "10px 12px" }}>
+                    <div style={{ color: "#7a9cc0", fontSize: 10, letterSpacing: "0.05em", marginBottom: 8 }}>AI MODEL SIGNALS</div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                      <div style={{ color: "#5b7fa6", fontSize: 10 }}>Anomaly</div>
+                      <div style={{ color: "#e2f0ff", fontSize: 10, textAlign: "right" }}>
+                        {aiFeatures.models.transaction_anomaly_detector?.is_anomaly ? "Detected" : "Normal"}
+                      </div>
+
+                      <div style={{ color: "#5b7fa6", fontSize: 10 }}>Behavior Shift</div>
+                      <div style={{ color: "#e2f0ff", fontSize: 10, textAlign: "right" }}>
+                        {aiFeatures.models.behavior_shift_detector?.behavior_shift_detected ? "Detected" : "None"}
+                      </div>
+
+                      <div style={{ color: "#5b7fa6", fontSize: 10 }}>Entity Type</div>
+                      <div style={{ color: "#e2f0ff", fontSize: 10, textAlign: "right" }}>
+                        {aiFeatures.models.entity_type_classifier?.entity_type ?? "Unknown"}
+                      </div>
+
+                      <div style={{ color: "#5b7fa6", fontSize: 10 }}>Priority Score</div>
+                      <div style={{ color: "#ff7700", fontSize: 10, textAlign: "right", fontWeight: 700 }}>
+                        {aiFeatures.models.alert_prioritizer?.priority_score?.toFixed(1) ?? "-"}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                   {[
                     { icon: Activity, label: "Total Transactions", value: analysis.total_transactions.toLocaleString() },
@@ -411,7 +683,7 @@ export function WalletAnalyzerPage() {
                 <div style={{ color: "#7a9cc0", fontSize: 11, letterSpacing: "0.05em", marginBottom: 8 }}>
                   CONNECTION GRAPH
                 </div>
-                <div style={{ background: "#070d1a", border: "1px solid #1a3050", borderRadius: 10, height: 240, overflow: "hidden" }}>
+                <div style={{ background: "#070d1a", border: "1px solid #1a3050", borderRadius: 10, height: 320, overflow: "hidden" }}>
                   <MiniFlowGraph
                     walletAddress={analysis.wallet_address.toLowerCase()}
                     counterparties={counterparties}
