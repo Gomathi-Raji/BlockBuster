@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 from analytics_data import build_analytics_dataset
 from fraud_model import ModelNotTrainedError, predict_from_features, predict_from_wallet_address, train_wallet_risk_model
 from multi_model_trainer import MODEL_FILES, predict_all_models_for_wallet, predict_all_models_for_wallets, train_all_models
+from threat_intel import lookup_addresses
 from wallet_analyzer import analyze_transactions
 
 # ---------------------------------------------------------------------------
@@ -429,14 +430,47 @@ def analyze_wallet():
         return jsonify({"error": fetch_error}), 502
 
     # Run analysis
-    analysis = analyze_transactions(raw_transactions)
+    analysis = analyze_transactions(raw_transactions, wallet_address=wallet_address)
+
+    # Threat-intel verification for analyzed wallet + suspicious counterparties.
+    related_addresses = {wallet_address.strip().lower()}
+    for tx in analysis.get("suspicious_transactions", []):
+        frm = str(tx.get("from", "")).strip().lower()
+        to = str(tx.get("to", "")).strip().lower()
+        if frm:
+            related_addresses.add(frm)
+        if to:
+            related_addresses.add(to)
+
+    intel_map = lookup_addresses(sorted(related_addresses))
+    high_conf_hits = [item for item in intel_map.values() if bool(item.get("is_flagged"))]
+    score_boost = sum(int(item.get("score_boost", 0) or 0) for item in high_conf_hits)
+    adjusted_risk = min(100, int(analysis["risk_score"]) + min(30, score_boost))
+
+    reasons = list(analysis.get("explainability", {}).get("reasons", []))
+    if high_conf_hits:
+        reasons.insert(0, f"Threat-intel matched {len(high_conf_hits)} wallet(s) in external/watchlist datasets")
+
+    explainability = {
+        **analysis.get("explainability", {}),
+        "reasons": reasons,
+        "summary": f"Wallet {'flagged' if adjusted_risk >= 70 else 'under monitoring' if adjusted_risk >= 40 else 'low risk'} with adjusted risk score {adjusted_risk}/100",
+    }
 
     return jsonify({
         "wallet_address": wallet_address,
         "total_transactions": analysis["total_transactions"],
         "suspicious_transactions": analysis["suspicious_transactions"],
-        "risk_score": analysis["risk_score"],
+        "risk_score": adjusted_risk,
         "transaction_flow": analysis["transaction_flow"],
+        "explainability": explainability,
+        "threat_intelligence": {
+            "checked_addresses": len(related_addresses),
+            "flagged_addresses": len(high_conf_hits),
+            "sources": ["local_scam_datasets", "bitcoin_abuse", "chainabuse"],
+            "matches": high_conf_hits,
+            "results": intel_map,
+        },
     }), 200
 
 

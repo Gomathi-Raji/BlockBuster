@@ -369,6 +369,13 @@ export function WalletAnalyzerPage() {
   const [analysis, setAnalysis] = useState<WalletAnalysisResponse | null>(null);
   const [aiFeatures, setAiFeatures] = useState<MlAllFeaturesResponse | null>(null);
   const [copied, setCopied] = useState(false);
+  const [detailTab, setDetailTab] = useState<"overview" | "threat">("overview");
+  const [expandedIntelAddress, setExpandedIntelAddress] = useState<string | null>(null);
+
+  useEffect(() => {
+    setDetailTab("overview");
+    setExpandedIntelAddress(null);
+  }, [analysis?.wallet_address]);
 
   const executeAnalysis = async () => {
     const walletAddress = query.trim();
@@ -466,6 +473,17 @@ export function WalletAnalyzerPage() {
 
   const firstSeen = transactions.at(-1)?.timestamp;
   const lastSeen = transactions.at(0)?.timestamp;
+
+  const intelSourceCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    const matches = analysis?.threat_intelligence?.matches ?? [];
+    matches.forEach((match) => {
+      match.hits.forEach((hit) => {
+        counts[hit.source] = (counts[hit.source] ?? 0) + 1;
+      });
+    });
+    return counts;
+  }, [analysis]);
 
   const copyAddress = async () => {
     if (!analysis) return;
@@ -634,6 +652,32 @@ export function WalletAnalyzerPage() {
                   </div>
                 </div>
 
+                {analysis.explainability && (
+                  <div style={{ marginBottom: 14, background: "#050912", border: "1px solid #0f1e35", borderRadius: 8, padding: "10px 12px" }}>
+                    <div style={{ color: "#7a9cc0", fontSize: 10, letterSpacing: "0.05em", marginBottom: 8 }}>WHY THIS WALLET WAS SCORED</div>
+                    <div style={{ color: "#c8def6", fontSize: 11, marginBottom: 6 }}>{analysis.explainability.summary}</div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                      {analysis.explainability.reasons.slice(0, 4).map((reason) => (
+                        <div key={reason} style={{ color: "#89afcf", fontSize: 10 }}>
+                          • {reason}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {analysis.threat_intelligence && (
+                  <div style={{ marginBottom: 14, background: "#050912", border: "1px solid #0f1e35", borderRadius: 8, padding: "10px 12px" }}>
+                    <div style={{ color: "#7a9cc0", fontSize: 10, letterSpacing: "0.05em", marginBottom: 8 }}>THREAT INTELLIGENCE CHECK</div>
+                    <div style={{ color: "#c8def6", fontSize: 11, marginBottom: 4 }}>
+                      Checked {analysis.threat_intelligence.checked_addresses} addresses across {analysis.threat_intelligence.sources.join(", ")}
+                    </div>
+                    <div style={{ color: analysis.threat_intelligence.flagged_addresses > 0 ? "#ff9090" : "#84d6a3", fontSize: 10 }}>
+                      Matches found: {analysis.threat_intelligence.flagged_addresses}
+                    </div>
+                  </div>
+                )}
+
                 {aiFeatures && (
                   <div style={{ marginBottom: 14, background: "#050912", border: "1px solid #0f1e35", borderRadius: 8, padding: "10px 12px" }}>
                     <div style={{ color: "#7a9cc0", fontSize: 10, letterSpacing: "0.05em", marginBottom: 8 }}>AI MODEL SIGNALS</div>
@@ -658,6 +702,16 @@ export function WalletAnalyzerPage() {
                         {aiFeatures.models.alert_prioritizer?.priority_score?.toFixed(1) ?? "-"}
                       </div>
                     </div>
+                    {aiFeatures.explainability && (
+                      <div style={{ marginTop: 10, borderTop: "1px solid #0f1e35", paddingTop: 8 }}>
+                        <div style={{ color: "#7a9cc0", fontSize: 10, marginBottom: 4 }}>Model rationale</div>
+                        {aiFeatures.explainability.reasons.slice(0, 3).map((reason) => (
+                          <div key={reason} style={{ color: "#89afcf", fontSize: 10 }}>
+                            • {reason}
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -694,82 +748,225 @@ export function WalletAnalyzerPage() {
             </div>
           </div>
 
-          <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
-            <div
-              style={{
-                flex: 2,
-                minWidth: 320,
-                background: "linear-gradient(135deg, #090f1e 0%, #0a1628 100%)",
-                border: "1px solid #1a3050",
-                borderRadius: 12,
-                padding: 24,
-              }}
-            >
-              <div style={{ color: "#e2f0ff", fontWeight: 700, fontSize: 14, marginBottom: 4 }}>Volume History</div>
-              <div style={{ color: "#5b7fa6", fontSize: 11, marginBottom: 14 }}>
-                Total analyzed volume: {totalVolumeEth.toFixed(4)} ETH
-                {firstSeen ? ` • first seen ${new Date(firstSeen).toLocaleDateString()}` : ""}
-              </div>
-              <ResponsiveContainer width="100%" height={180}>
-                <AreaChart data={historyData}>
-                  <defs>
-                    <linearGradient id="historyGradient" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#00aaff" stopOpacity={0.3} />
-                      <stop offset="95%" stopColor="#00aaff" stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <XAxis dataKey="date" tick={{ fill: "#5b7fa6", fontSize: 10 }} axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fill: "#5b7fa6", fontSize: 10 }} axisLine={false} tickLine={false} />
-                  <Tooltip content={<ChartTooltip />} />
-                  <Area type="monotone" dataKey="volume" name="Volume" stroke="#00aaff" strokeWidth={2} fill="url(#historyGradient)" />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
+          <div
+            style={{
+              background: "linear-gradient(135deg, #090f1e 0%, #0a1628 100%)",
+              border: "1px solid #1a3050",
+              borderRadius: 12,
+              padding: 14,
+            }}
+          >
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <button
+                onClick={() => setDetailTab("overview")}
+                style={{
+                  border: detailTab === "overview" ? "1px solid #00aaff" : "1px solid #1a3050",
+                  background: detailTab === "overview" ? "rgba(0,170,255,0.18)" : "#071021",
+                  color: detailTab === "overview" ? "#d8efff" : "#7aa6ca",
+                  borderRadius: 8,
+                  fontSize: 11,
+                  letterSpacing: "0.05em",
+                  padding: "8px 10px",
+                  cursor: "pointer",
+                }}
+              >
+                OVERVIEW
+              </button>
+              <button
+                onClick={() => setDetailTab("threat")}
+                style={{
+                  border: detailTab === "threat" ? "1px solid #ff7f50" : "1px solid #1a3050",
+                  background: detailTab === "threat" ? "rgba(255,127,80,0.15)" : "#071021",
+                  color: detailTab === "threat" ? "#ffd8c7" : "#7aa6ca",
+                  borderRadius: 8,
+                  fontSize: 11,
+                  letterSpacing: "0.05em",
+                  padding: "8px 10px",
+                  cursor: "pointer",
+                }}
+              >
+                THREAT INTEL TAB
+              </button>
 
-            <div
-              style={{
-                flex: 1,
-                minWidth: 280,
-                background: "linear-gradient(135deg, #090f1e 0%, #0a1628 100%)",
-                border: "1px solid #1a3050",
-                borderRadius: 12,
-                padding: 24,
-              }}
-            >
-              <div style={{ color: "#e2f0ff", fontWeight: 700, fontSize: 14, marginBottom: 4 }}>Top Counterparties</div>
-              <div style={{ color: "#5b7fa6", fontSize: 11, marginBottom: 14 }}>
-                Ranked by derived counterparty risk
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {counterparties.slice(0, 6).map((party) => (
-                  <div
-                    key={party.address}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 8,
-                      padding: "8px 10px",
-                      background: party.risk >= 70 ? "rgba(255,43,74,0.07)" : "rgba(0,0,0,0.2)",
-                      border: `1px solid ${party.risk >= 70 ? "#ff2b4a22" : "#0f1e35"}`,
-                      borderRadius: 8,
-                    }}
-                  >
-                    <div style={{ width: 8, height: 8, borderRadius: "50%", background: getRiskColor(party.risk), flexShrink: 0 }} />
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ color: "#e2f0ff", fontSize: 11, fontFamily: "'JetBrains Mono', monospace" }}>
-                        {formatAddress(party.address)}
-                      </div>
-                      <div style={{ color: "#5b7fa6", fontSize: 10 }}>
-                        {party.txCount} txs • {party.suspiciousTxCount} suspicious
-                      </div>
-                    </div>
-                    <span style={{ color: getRiskColor(party.risk), fontSize: 10, fontWeight: 700 }}>{party.risk}</span>
-                  </div>
-                ))}
-                {counterparties.length === 0 && <div style={{ color: "#5b7fa6", fontSize: 12 }}>No counterparties found.</div>}
-              </div>
+              {Object.entries(intelSourceCounts).map(([source, count]) => (
+                <div
+                  key={source}
+                  style={{
+                    border: "1px solid #304f73",
+                    background: "rgba(7,16,33,0.92)",
+                    color: "#9fc3e0",
+                    borderRadius: 9999,
+                    fontSize: 10,
+                    padding: "7px 10px",
+                  }}
+                >
+                  {source.replace("_", " ")}: {count}
+                </div>
+              ))}
             </div>
           </div>
+
+          {detailTab === "overview" && (
+            <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
+              <div
+                style={{
+                  flex: 2,
+                  minWidth: 320,
+                  background: "linear-gradient(135deg, #090f1e 0%, #0a1628 100%)",
+                  border: "1px solid #1a3050",
+                  borderRadius: 12,
+                  padding: 24,
+                }}
+              >
+                <div style={{ color: "#e2f0ff", fontWeight: 700, fontSize: 14, marginBottom: 4 }}>Volume History</div>
+                <div style={{ color: "#5b7fa6", fontSize: 11, marginBottom: 14 }}>
+                  Total analyzed volume: {totalVolumeEth.toFixed(4)} ETH
+                  {firstSeen ? ` • first seen ${new Date(firstSeen).toLocaleDateString()}` : ""}
+                </div>
+                <ResponsiveContainer width="100%" height={180}>
+                  <AreaChart data={historyData}>
+                    <defs>
+                      <linearGradient id="historyGradient" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#00aaff" stopOpacity={0.3} />
+                        <stop offset="95%" stopColor="#00aaff" stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <XAxis dataKey="date" tick={{ fill: "#5b7fa6", fontSize: 10 }} axisLine={false} tickLine={false} />
+                    <YAxis tick={{ fill: "#5b7fa6", fontSize: 10 }} axisLine={false} tickLine={false} />
+                    <Tooltip content={<ChartTooltip />} />
+                    <Area type="monotone" dataKey="volume" name="Volume" stroke="#00aaff" strokeWidth={2} fill="url(#historyGradient)" />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+
+              <div
+                style={{
+                  flex: 1,
+                  minWidth: 280,
+                  background: "linear-gradient(135deg, #090f1e 0%, #0a1628 100%)",
+                  border: "1px solid #1a3050",
+                  borderRadius: 12,
+                  padding: 24,
+                }}
+              >
+                <div style={{ color: "#e2f0ff", fontWeight: 700, fontSize: 14, marginBottom: 4 }}>Top Counterparties</div>
+                <div style={{ color: "#5b7fa6", fontSize: 11, marginBottom: 14 }}>
+                  Ranked by derived counterparty risk
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {counterparties.slice(0, 6).map((party) => (
+                    <div
+                      key={party.address}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        padding: "8px 10px",
+                        background: party.risk >= 70 ? "rgba(255,43,74,0.07)" : "rgba(0,0,0,0.2)",
+                        border: `1px solid ${party.risk >= 70 ? "#ff2b4a22" : "#0f1e35"}`,
+                        borderRadius: 8,
+                      }}
+                    >
+                      <div style={{ width: 8, height: 8, borderRadius: "50%", background: getRiskColor(party.risk), flexShrink: 0 }} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ color: "#e2f0ff", fontSize: 11, fontFamily: "'JetBrains Mono', monospace" }}>
+                          {formatAddress(party.address)}
+                        </div>
+                        <div style={{ color: "#5b7fa6", fontSize: 10 }}>
+                          {party.txCount} txs • {party.suspiciousTxCount} suspicious
+                        </div>
+                      </div>
+                      <span style={{ color: getRiskColor(party.risk), fontSize: 10, fontWeight: 700 }}>{party.risk}</span>
+                    </div>
+                  ))}
+                  {counterparties.length === 0 && <div style={{ color: "#5b7fa6", fontSize: 12 }}>No counterparties found.</div>}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {detailTab === "threat" && (
+            <div
+              style={{
+                background: "linear-gradient(135deg, #090f1e 0%, #0a1628 100%)",
+                border: "1px solid #1a3050",
+                borderRadius: 12,
+                padding: 20,
+              }}
+            >
+              <div style={{ color: "#e2f0ff", fontWeight: 700, fontSize: 14, marginBottom: 4 }}>Threat Intel Evidence</div>
+              <div style={{ color: "#5b7fa6", fontSize: 11, marginBottom: 14 }}>
+                Per-source verification for this wallet investigation. Click an address card for drilldown evidence.
+              </div>
+
+              {(analysis.threat_intelligence?.matches ?? []).length === 0 && (
+                <div style={{ color: "#84d6a3", fontSize: 12, background: "#071021", border: "1px solid #234a3b", borderRadius: 8, padding: "10px 12px" }}>
+                  No threat-intel matches found in the configured datasets.
+                </div>
+              )}
+
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {(analysis.threat_intelligence?.matches ?? []).map((match) => {
+                  const expanded = expandedIntelAddress === match.address;
+                  return (
+                    <div key={match.address} style={{ border: "1px solid #223a59", borderRadius: 10, background: "#071021" }}>
+                      <button
+                        onClick={() => setExpandedIntelAddress(expanded ? null : match.address)}
+                        style={{
+                          width: "100%",
+                          background: "transparent",
+                          border: "none",
+                          textAlign: "left",
+                          padding: "11px 12px",
+                          cursor: "pointer",
+                          color: "inherit",
+                        }}
+                      >
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
+                          <div>
+                            <div style={{ color: "#d1e8ff", fontSize: 11, fontFamily: "'JetBrains Mono', monospace" }}>{formatAddress(match.address)}</div>
+                            <div style={{ color: "#6f98bc", fontSize: 10, marginTop: 2 }}>{match.hits.length} source hit(s)</div>
+                          </div>
+                          <div style={{ color: match.risk_level === "critical" ? "#ff6e6e" : match.risk_level === "high" ? "#ffa06e" : "#f8d47a", fontSize: 10, fontWeight: 700 }}>
+                            {match.risk_level.toUpperCase()}
+                          </div>
+                        </div>
+                      </button>
+
+                      {expanded && (
+                        <div style={{ borderTop: "1px solid #223a59", padding: "10px 12px", display: "flex", flexDirection: "column", gap: 8 }}>
+                          {match.hits.map((hit, idx) => (
+                            <div key={`${hit.source}_${idx}`} style={{ border: "1px solid #1d324d", borderRadius: 8, padding: "8px 10px", background: "rgba(2, 7, 16, 0.75)" }}>
+                              <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginBottom: 4 }}>
+                                <div style={{ color: "#b8d4f0", fontSize: 11, fontWeight: 600 }}>{hit.source.replace("_", " ")}</div>
+                                <div style={{ color: "#88adc9", fontSize: 10 }}>{hit.confidence} confidence</div>
+                              </div>
+                              <div style={{ color: "#6f98bc", fontSize: 10, marginBottom: 2 }}>
+                                Dataset: {hit.dataset} • Type: {hit.match_type}
+                                {typeof hit.report_count === "number" ? ` • Reports: ${hit.report_count}` : ""}
+                              </div>
+                              {hit.evidence?.categories?.length ? (
+                                <div style={{ color: "#90b4d1", fontSize: 10, marginTop: 4 }}>
+                                  Categories: {hit.evidence.categories.join(", ")}
+                                </div>
+                              ) : null}
+                              {hit.evidence?.notes?.length ? (
+                                <div style={{ display: "flex", flexDirection: "column", gap: 3, marginTop: 4 }}>
+                                  {hit.evidence.notes.map((note) => (
+                                    <div key={note} style={{ color: "#87aaca", fontSize: 10 }}>• {note}</div>
+                                  ))}
+                                </div>
+                              ) : null}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           <div
             style={{

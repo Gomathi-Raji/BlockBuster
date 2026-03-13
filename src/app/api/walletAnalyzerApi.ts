@@ -22,6 +22,38 @@ export interface WalletAnalysisResponse {
   suspicious_transactions: SuspiciousTransaction[];
   risk_score: number;
   transaction_flow: FlowTransaction[];
+  explainability?: {
+    decision: "flagged" | "monitor" | "low_risk";
+    summary: string;
+    reasons: string[];
+    signals?: {
+      high_risk_counterparties: number;
+      suspicious_transaction_ratio: number;
+      large_transactions: number;
+    };
+  };
+  threat_intelligence?: {
+    checked_addresses: number;
+    flagged_addresses: number;
+    sources: string[];
+    matches: Array<{
+      address: string;
+      is_flagged: boolean;
+      risk_level: string;
+      score_boost: number;
+      hits: Array<{
+        source: string;
+        dataset: string;
+        match_type: string;
+        confidence: string;
+        report_count?: number;
+        evidence?: {
+          categories?: string[];
+          notes?: string[];
+        };
+      }>;
+    }>;
+  };
 }
 
 export interface MlStatusResponse {
@@ -64,6 +96,11 @@ export interface MlAllFeaturesResponse {
     alert_prioritizer?: {
       priority_score: number;
     };
+  };
+  explainability?: {
+    decision: "flagged" | "monitor" | "low_risk";
+    summary: string;
+    reasons: string[];
   };
 }
 
